@@ -44,7 +44,7 @@ use deku::prelude::*;
 #[deku(
     endian = "endian",
     ctx = "endian: deku::ctx::Endian, cam: &ControlAckMode, packet_header: &PacketHeader",
-    id = "CommandPayload::derive_type(cam, packet_header)"
+    id = "CommandPayload::derive_type(cam, packet_header)?"
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CommandPayload {
@@ -67,29 +67,45 @@ pub enum CommandPayload {
 
 impl CommandPayload {
     /// Determine the type of command payload based on CAM field and VRT packet header.
-    fn derive_type(cam: &ControlAckMode, packet_header: &PacketHeader) -> CommandPayload {
-        if packet_header.is_ack_packet().unwrap() {
-            if [cam.validation(), cam.execution(), cam.state()]
+    ///
+    /// # Errors
+    /// An error is returned when the packet is not a command packet, or when an ACK packet's CAM
+    /// field does not select exactly one of validation, execution, or query state.
+    fn derive_type(
+        cam: &ControlAckMode,
+        packet_header: &PacketHeader,
+    ) -> Result<CommandPayload, DekuError> {
+        if packet_header
+            .is_ack_packet()
+            .map_err(|err| DekuError::Parse(err.to_string().into()))?
+        {
+            let selected = [cam.validation(), cam.execution(), cam.state()]
                 .iter()
-                .filter(|&x| *x)
-                .count()
-                != 1
-            {
-                panic!("CAM field in ACK packet does not exclusively select one of Validation, Exec, or Query");
+                .filter(|&&x| x)
+                .count();
+            if selected != 1 {
+                return Err(DekuError::Parse(
+                    format!(
+                        "CAM field in ACK packet selects {selected} of validation, exec, \
+                         or query state - exactly one is required"
+                    )
+                    .into(),
+                ));
             }
             if cam.validation() {
-                CommandPayload::ValidationAck(Ack::default())
+                Ok(CommandPayload::ValidationAck(Ack::default()))
             } else if cam.execution() {
-                CommandPayload::ExecAck(Ack::default())
-            } else if cam.state() {
-                CommandPayload::QueryAck(QueryAck::default())
+                Ok(CommandPayload::ExecAck(Ack::default()))
             } else {
-                unreachable!()
+                Ok(CommandPayload::QueryAck(QueryAck::default()))
             }
-        } else if packet_header.is_cancellation_packet().unwrap() {
-            CommandPayload::Cancellation(Cancellation::default())
+        } else if packet_header
+            .is_cancellation_packet()
+            .map_err(|err| DekuError::Parse(err.to_string().into()))?
+        {
+            Ok(CommandPayload::Cancellation(Cancellation::default()))
         } else {
-            CommandPayload::Control(Control::default())
+            Ok(CommandPayload::Control(Control::default()))
         }
     }
 
@@ -337,5 +353,57 @@ impl CommandPayload {
             CommandPayload::QueryAck(p) => Ok(p),
             _ => Err(VitaError::QueryAckOnly),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Vrt;
+
+    /// A validation ACK packet is a 4-byte header, a 4-byte stream ID, then the CAM word, so the
+    /// CAM occupies bytes 8..12, big-endian.
+    const CAM_OFFSET: usize = 8;
+
+    /// Serialize a well-formed validation ACK packet and rewrite its CAM word.
+    fn ack_bytes_with_cam(patch: impl FnOnce(u32) -> u32) -> Vec<u8> {
+        let mut bytes = Vrt::new_validation_ack_packet().to_bytes().unwrap();
+        let cam = u32::from_be_bytes(bytes[CAM_OFFSET..CAM_OFFSET + 4].try_into().unwrap());
+        // Guard the offset assumption above: the validation bit must be set.
+        assert_ne!(cam & (1 << 20), 0, "CAM_OFFSET does not point at the CAM");
+        bytes[CAM_OFFSET..CAM_OFFSET + 4].copy_from_slice(&patch(cam).to_be_bytes());
+        bytes
+    }
+
+    #[test]
+    fn well_formed_validation_ack_round_trips() {
+        let bytes = ack_bytes_with_cam(|cam| cam);
+        let parsed = Vrt::try_from(bytes.as_ref()).unwrap();
+        let command = parsed.payload().command().unwrap();
+        assert!(command.payload().validation_ack().is_ok());
+    }
+
+    #[test]
+    fn ack_selecting_no_sub_type_is_a_parse_error() {
+        // Clear validation (20), execution (19) and query state (18).
+        let bytes = ack_bytes_with_cam(|cam| cam & !(0b111 << 18));
+        assert!(Vrt::try_from(bytes.as_ref()).is_err());
+    }
+
+    #[test]
+    fn ack_selecting_multiple_sub_types_is_a_parse_error() {
+        // Set execution (19) alongside the validation bit already set.
+        let bytes = ack_bytes_with_cam(|cam| cam | (1 << 19));
+        assert!(Vrt::try_from(bytes.as_ref()).is_err());
+    }
+
+    #[test]
+    fn serializing_an_ack_with_an_ambiguous_cam_is_an_error() {
+        let mut packet = Vrt::new_validation_ack_packet();
+        let command = packet.payload_mut().command_mut().unwrap();
+        let mut cam = command.cam();
+        cam.set_execution();
+        command.set_cam(cam);
+        assert!(packet.to_bytes().is_err());
     }
 }
