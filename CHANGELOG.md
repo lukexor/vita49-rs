@@ -10,6 +10,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `SignalData::payload_mut` and `Vrt::signal_payload_mut` lend the payload out as `&mut [u8]`,
+  so a payload can be edited where it sits (byte swapping samples, say) rather than rebuilt
+  and set back
+- `SignalData::resize_payload` and `Vrt::resize_signal_payload` resize the payload and return
+  it to fill, reusing the vector the packet already holds. A sender restating one packet per
+  block of samples no longer allocates a payload for every block, and the `Vrt` form updates
+  the packet size
+
 ## [2.0.0] - 2026-09-09
 
 ### Added

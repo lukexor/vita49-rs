@@ -97,6 +97,31 @@ impl SignalData {
         &self.data
     }
 
+    /// Get the data payload as a mutable slice (zero-copy).
+    ///
+    /// Use this to edit a payload where it sits, such as byte swapping samples,
+    /// rather than building a new vector and calling [`Self::set_payload`]. The
+    /// length cannot change, so the packet size stays correct and there is no
+    /// need to call [`crate::Vrt::update_packet_size`]. To change the length,
+    /// use [`Self::resize_payload`].
+    ///
+    /// # Example
+    /// ```
+    /// # use std::io;
+    /// use vita49::prelude::*;
+    /// # fn main() -> Result<(), VitaError> {
+    /// let mut packet = Vrt::new_signal_data_packet();
+    /// packet.set_signal_payload(&[1, 2, 3, 4])?;
+    /// let sig_data = packet.payload_mut().signal_data_mut()?;
+    /// sig_data.payload_mut().reverse();
+    /// assert_eq!(packet.signal_payload()?, &[4, 3, 2, 1]);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn payload_mut(&mut self) -> &mut [u8] {
+        &mut self.data
+    }
+
     /// Consume the struct and take ownership of the underlying payload bytes (zero-copy).
     ///
     /// # Example
@@ -133,6 +158,36 @@ impl SignalData {
     /// ```
     pub fn set_payload(&mut self, bytes: impl Into<Vec<u8>>) {
         self.data = bytes.into()
+    }
+
+    /// Resize the payload and get it back as a mutable slice to fill.
+    ///
+    /// Reuses the vector the packet already holds, so restating one packet per
+    /// block of samples does not allocate a payload for every block the way
+    /// [`Self::set_payload`] does. Growing the payload zeroes the new bytes,
+    /// and shrinking it truncates.
+    ///
+    /// The packet size field counts the payload, so a caller reaching this
+    /// directly must call [`crate::Vrt::update_packet_size`] afterwards.
+    /// [`crate::Vrt::resize_signal_payload`] does that for you.
+    ///
+    /// # Example
+    /// ```
+    /// # use std::io;
+    /// use vita49::prelude::*;
+    /// # fn main() -> Result<(), VitaError> {
+    /// let mut packet = Vrt::new_signal_data_packet();
+    /// packet.set_signal_payload(&[1, 2, 3, 4])?;
+    /// let sig_data = packet.payload_mut().signal_data_mut()?;
+    /// sig_data.resize_payload(8).copy_from_slice(&[5, 6, 7, 8, 9, 10, 11, 12]);
+    /// packet.update_packet_size();
+    /// assert_eq!(packet.signal_payload()?, &[5, 6, 7, 8, 9, 10, 11, 12]);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn resize_payload(&mut self, len: usize) -> &mut [u8] {
+        self.data.resize(len, 0);
+        &mut self.data
     }
 
     /// Gets the size of the payload in 32-bit words.
@@ -232,5 +287,40 @@ mod tests {
         // Data bytes must be restored to their original positions (followed by zero padding)
         assert_eq!(&read_data[0..6], &raw_payload[..]);
         assert_eq!(&read_data[6..8], &[0x00, 0x00]);
+    }
+
+    #[test]
+    fn resize_payload_keeps_the_same_allocation() {
+        let mut sig_data = SignalData::from_owned(vec![0u8; 4096]);
+        let first = sig_data.payload().as_ptr();
+
+        sig_data.resize_payload(4096).fill(7);
+        assert_eq!(
+            sig_data.payload().as_ptr(),
+            first,
+            "a resize to the same \
+            length must not move the buffer"
+        );
+
+        // Shrinking and growing back stays inside the capacity already held.
+        sig_data.resize_payload(16);
+        sig_data.resize_payload(4096);
+        assert_eq!(sig_data.payload().as_ptr(), first);
+    }
+
+    #[test]
+    fn resize_payload_zeroes_growth_and_truncates() {
+        let mut sig_data = SignalData::from_bytes(&[1, 2, 3, 4]);
+
+        assert_eq!(sig_data.resize_payload(6), &[1, 2, 3, 4, 0, 0]);
+        assert_eq!(sig_data.resize_payload(2), &[1, 2]);
+        assert_eq!(sig_data.payload_size_bytes(), 2);
+    }
+
+    #[test]
+    fn payload_mut_edits_in_place() {
+        let mut sig_data = SignalData::from_bytes(&[1, 2, 3, 4]);
+        sig_data.payload_mut().reverse();
+        assert_eq!(sig_data.payload(), &[4, 3, 2, 1]);
     }
 }
