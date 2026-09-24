@@ -7,6 +7,8 @@ Error types/enumerations for the `vita49` crate.
 
 use thiserror::Error;
 
+use crate::packet_header::PacketType;
+
 /// Generic `vita49` crate error enumeration.
 #[derive(Error, Debug)]
 #[non_exhaustive]
@@ -63,6 +65,9 @@ pub enum VitaError {
     /// while the ID is set. ID and UUID are mutually exclusive.
     #[error("attempted to set controllee/controller UUID field when ID field is set")]
     TriedUuidWhenIdSet,
+    /// Error given when the packet's payload does not support a packet type.
+    #[error("payload does not support packet type {0:?}")]
+    UnsupportedPacketType(PacketType),
     /// Error given when attempting to use an out-of-range value.
     #[error("out of range")]
     OutOfRange,
