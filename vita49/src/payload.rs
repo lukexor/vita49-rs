@@ -359,32 +359,37 @@ impl Payload {
     /// ```
     /// use vita49::prelude::*;
     /// let packet = Vrt::new_context_packet();
-    /// assert_eq!(
-    ///     packet.payload().packet_types(),
-    ///     &[PacketType::Context, PacketType::ExtensionContext]
-    /// );
+    /// assert_eq!(packet.payload().packet_types(), &[PacketType::Context]);
     /// ```
     pub fn packet_types(&self) -> &'static [PacketType] {
         match self {
             Payload::SignalData(_) => &[
                 PacketType::SignalDataWithoutStreamId,
                 PacketType::SignalData,
+            ],
+            Payload::ExtensionData(_) => &[
                 PacketType::ExtensionDataWithoutStreamId,
                 PacketType::ExtensionData,
             ],
-            Payload::Context(_) => &[PacketType::Context, PacketType::ExtensionContext],
+            Payload::Context(_) => &[PacketType::Context],
+            Payload::ExtensionContext(_) => &[PacketType::ExtensionContext],
             Payload::Command(_) => &[PacketType::Command, PacketType::ExtensionCommand],
         }
     }
 
     /// Gets the payload size in 32-bit words.
-    pub fn size_words(&self) -> u16 {
+    ///
+    /// A signal data payload can exceed `u16::MAX` words, and
+    /// [`Vrt::update_packet_size`](crate::Vrt::update_packet_size) then returns
+    /// [`VitaError::PacketTooLarge`]. Context and command payloads are counted
+    /// in `u16`, so this does not cover one past that size.
+    pub fn size_words(&self) -> usize {
         match self {
             Payload::SignalData(p) => p.size_words(),
             Payload::ExtensionData(p) => SignalData::size_words_for(p.len()),
-            Payload::Context(p) => p.size_words(),
+            Payload::Context(p) => usize::from(p.size_words()),
             Payload::ExtensionContext(p) => SignalData::size_words_for(p.len()),
-            Payload::Command(p) => p.size_words(),
+            Payload::Command(p) => usize::from(p.size_words()),
         }
     }
 }

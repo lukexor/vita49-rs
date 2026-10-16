@@ -11,6 +11,10 @@ use crate::prelude::*;
 use crate::Trailer;
 use deku::prelude::*;
 
+/// The `expect` message for a constructor's size update.
+// A constructor's packet is a bare prologue around an empty payload, a few words at most.
+const EMPTY_PACKET_FITS: &str = "an empty packet fits the packet size field";
+
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, DekuRead, DekuWrite)]
 #[deku(endian = "big")]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -77,7 +81,7 @@ impl Vrt {
     /// use vita49::prelude::*;
     /// # fn main() -> Result<(), VitaError> {
     /// let mut packet = Vrt::new_signal_data_packet();
-    /// packet.set_stream_id(Some(0xDEADBEEF));
+    /// packet.set_stream_id(Some(0xDEADBEEF))?;
     /// packet.set_signal_payload(&[1, 2, 3, 4, 5, 6, 7, 8])?;
     /// assert_eq!(packet.stream_id(), Some(0xDEADBEEF));
     /// assert_eq!(packet.signal_payload()?, &[1, 2, 3, 4, 5, 6, 7, 8]);
@@ -94,7 +98,7 @@ impl Vrt {
             payload: Payload::SignalData(SignalData::new()),
             trailer: None,
         };
-        ret.update_packet_size();
+        ret.update_packet_size().expect(EMPTY_PACKET_FITS);
         ret
     }
 
@@ -105,7 +109,7 @@ impl Vrt {
     /// use vita49::prelude::*;
     /// # fn main() -> Result<(), VitaError> {
     /// let mut packet = Vrt::new_extension_data_packet();
-    /// packet.set_stream_id(Some(0xDEADBEEF));
+    /// packet.set_stream_id(Some(0xDEADBEEF))?;
     /// packet.set_extension_payload(&[1, 2, 3, 4])?;
     /// assert_eq!(packet.header().packet_type(), PacketType::ExtensionData);
     /// assert_eq!(packet.extension_payload()?, &[1, 2, 3, 4]);
@@ -122,7 +126,7 @@ impl Vrt {
             payload: Payload::ExtensionData(Vec::new()),
             trailer: None,
         };
-        ret.update_packet_size();
+        ret.update_packet_size().expect(EMPTY_PACKET_FITS);
         ret
     }
 
@@ -146,7 +150,7 @@ impl Vrt {
             payload: Payload::Context(Context::new()),
             trailer: None,
         };
-        ret.update_packet_size();
+        ret.update_packet_size().expect(EMPTY_PACKET_FITS);
         ret
     }
 
@@ -157,7 +161,7 @@ impl Vrt {
     /// use vita49::prelude::*;
     /// # fn main() -> Result<(), VitaError> {
     /// let mut packet = Vrt::new_extension_context_packet();
-    /// packet.set_stream_id(Some(0xDEADBEEF));
+    /// packet.set_stream_id(Some(0xDEADBEEF))?;
     /// packet.set_extension_context_payload(&[1, 2, 3, 4])?;
     /// assert_eq!(packet.header().packet_type(), PacketType::ExtensionContext);
     /// assert_eq!(packet.extension_context_payload()?, &[1, 2, 3, 4]);
@@ -174,7 +178,7 @@ impl Vrt {
             payload: Payload::ExtensionContext(Vec::new()),
             trailer: None,
         };
-        ret.update_packet_size();
+        ret.update_packet_size().expect(EMPTY_PACKET_FITS);
         ret
     }
 
@@ -199,7 +203,7 @@ impl Vrt {
             payload: Payload::Command(Command::new_control()),
             trailer: None,
         };
-        ret.update_packet_size();
+        ret.update_packet_size().expect(EMPTY_PACKET_FITS);
         ret
     }
 
@@ -224,7 +228,7 @@ impl Vrt {
             payload: Payload::Command(Command::new_cancellation()),
             trailer: None,
         };
-        ret.update_packet_size();
+        ret.update_packet_size().expect(EMPTY_PACKET_FITS);
         ret
     }
 
@@ -250,7 +254,7 @@ impl Vrt {
             payload: Payload::Command(Command::new_validation_ack()),
             trailer: None,
         };
-        ret.update_packet_size();
+        ret.update_packet_size().expect(EMPTY_PACKET_FITS);
         ret
     }
 
@@ -276,7 +280,7 @@ impl Vrt {
             payload: Payload::Command(Command::new_exec_ack()),
             trailer: None,
         };
-        ret.update_packet_size();
+        ret.update_packet_size().expect(EMPTY_PACKET_FITS);
         ret
     }
 
@@ -302,7 +306,7 @@ impl Vrt {
             payload: Payload::Command(Command::new_query_ack()),
             trailer: None,
         };
-        ret.update_packet_size();
+        ret.update_packet_size().expect(EMPTY_PACKET_FITS);
         ret
     }
 
@@ -324,7 +328,8 @@ impl Vrt {
     ///
     /// The payload variant decides which packet types a packet can take, as
     /// [`Payload::packet_types`] lists. For example, a signal data packet can
-    /// become an extension data packet, but not a context packet.
+    /// drop its stream ID, but cannot become an extension data or context
+    /// packet.
     ///
     /// A type without a stream ID clears the stream ID, and a type with one
     /// sets a missing stream ID to 0. The packet size is updated
@@ -334,13 +339,17 @@ impl Vrt {
     /// A packet type the payload does not accept returns
     /// [`VitaError::WrongPacketType`] and leaves the packet unchanged.
     ///
+    /// A type that adds a stream ID to a packet that already fills the 16-bit
+    /// packet size field returns [`VitaError::PacketTooLarge`] and leaves the
+    /// packet unchanged.
+    ///
     /// # Example
     /// ```
     /// use vita49::prelude::*;
     /// # fn main() -> Result<(), VitaError> {
     /// let mut packet = Vrt::new_signal_data_packet();
-    /// packet.set_packet_type(PacketType::ExtensionData)?;
-    /// assert_eq!(packet.header().packet_type(), PacketType::ExtensionData);
+    /// packet.set_packet_type(PacketType::SignalDataWithoutStreamId)?;
+    /// assert_eq!(packet.header().packet_type(), PacketType::SignalDataWithoutStreamId);
     ///
     /// assert!(matches!(
     ///     packet.set_packet_type(PacketType::Context),
@@ -357,13 +366,14 @@ impl Vrt {
                 actual: packet_type,
             });
         }
-        self.header.set_packet_type(packet_type);
+        let mut header = self.header;
+        header.set_packet_type(packet_type);
+        self.set_header(header)?;
         if !self.header.stream_id_included() {
             self.stream_id = None;
         } else if self.stream_id.is_none() {
             self.stream_id = Some(0);
         }
-        self.update_packet_size();
         Ok(())
     }
 
@@ -373,7 +383,7 @@ impl Vrt {
     /// ```
     /// use vita49::prelude::*;
     /// let mut packet = Vrt::new_signal_data_packet();
-    /// packet.set_stream_id(Some(0xDEADBEEF));
+    /// packet.set_stream_id(Some(0xDEADBEEF)).unwrap();
     /// assert_eq!(packet.stream_id(), Some(0xDEADBEEF));
     /// ```
     pub fn stream_id(&self) -> Option<u32> {
@@ -388,48 +398,59 @@ impl Vrt {
     /// if you did `packet.set_stream_id(1)` on a `PacketType::SignalDataWithoutStreamId`,
     /// it would change the packet to a `PacketType:SignalData`.
     ///
+    /// The packet size is updated automatically.
+    ///
+    /// # Errors
+    /// Adding a stream ID to a packet that already fills the 16-bit packet
+    /// size field returns [`VitaError::PacketTooLarge`] and leaves the packet
+    /// unchanged.
+    ///
     /// # Example
     /// ```
     /// use vita49::prelude::*;
+    /// # fn main() -> Result<(), VitaError> {
     /// let mut packet = Vrt::new_signal_data_packet();
-    /// packet.set_stream_id(Some(0xDEADBEEF));
+    /// packet.set_stream_id(Some(0xDEADBEEF))?;
     /// assert_eq!(packet.stream_id(), Some(0xDEADBEEF));
     /// assert!(matches!(packet.header().packet_type(), PacketType::SignalData));
-    /// packet.set_stream_id(None);
+    /// packet.set_stream_id(None)?;
     /// assert!(matches!(packet.header().packet_type(), PacketType::SignalDataWithoutStreamId));
+    /// # Ok(())
+    /// # }
     /// ```
-    pub fn set_stream_id(&mut self, stream_id: Option<u32>) {
+    pub fn set_stream_id(&mut self, stream_id: Option<u32>) -> Result<(), VitaError> {
         if stream_id.is_none() && !self.header.packet_type().has_signal_data_payload() {
             // Per ANSI/VITA-49.2 Rule 5.1.2-1, the Stream Identifier shall be present in all
             // Context packets, Extension Context packets, Command packets, and Extension Command packets.
             // Default to Some(0) to avoid omitting mandatory wire bytes and desynchronizing the stream.
             self.stream_id = Some(0);
-            return;
+            return Ok(());
         }
-        self.stream_id = stream_id;
-        if self.stream_id.is_some() {
-            match self.header.packet_type() {
+        let mut header = self.header;
+        if stream_id.is_some() {
+            match header.packet_type() {
                 PacketType::SignalDataWithoutStreamId => {
-                    self.header.set_packet_type(PacketType::SignalData);
+                    header.set_packet_type(PacketType::SignalData);
                 }
                 PacketType::ExtensionDataWithoutStreamId => {
-                    self.header.set_packet_type(PacketType::ExtensionData);
+                    header.set_packet_type(PacketType::ExtensionData);
                 }
                 _ => (),
             }
         } else {
-            match self.header.packet_type() {
+            match header.packet_type() {
                 PacketType::SignalData => {
-                    self.header
-                        .set_packet_type(PacketType::SignalDataWithoutStreamId);
+                    header.set_packet_type(PacketType::SignalDataWithoutStreamId);
                 }
                 PacketType::ExtensionData => {
-                    self.header
-                        .set_packet_type(PacketType::ExtensionDataWithoutStreamId);
+                    header.set_packet_type(PacketType::ExtensionDataWithoutStreamId);
                 }
                 _ => (),
             }
         }
+        self.set_header(header)?;
+        self.stream_id = stream_id;
+        Ok(())
     }
 
     /// Gets a reference to the packet class identifier.
@@ -441,9 +462,31 @@ impl Vrt {
         self.class_id.as_mut()
     }
     /// Set the packet class identifier.
-    pub fn set_class_id(&mut self, class_id: Option<ClassIdentifier>) {
+    ///
+    /// The packet size is updated automatically.
+    ///
+    /// # Errors
+    /// Adding a class identifier to a packet that already fills the 16-bit
+    /// packet size field returns [`VitaError::PacketTooLarge`] and leaves the
+    /// packet unchanged.
+    ///
+    /// # Example
+    /// ```
+    /// use vita49::prelude::*;
+    /// # fn main() -> Result<(), VitaError> {
+    /// let mut packet = Vrt::new_signal_data_packet();
+    /// packet.set_class_id(Some(ClassIdentifier::default()))?;
+    /// assert!(packet.header().class_id_included());
+    /// assert_eq!(packet.header().packet_size(), 4);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn set_class_id(&mut self, class_id: Option<ClassIdentifier>) -> Result<(), VitaError> {
+        let mut header = self.header;
+        header.set_class_id_included(class_id.is_some());
+        self.set_header(header)?;
         self.class_id = class_id;
-        self.header.set_class_id_included(class_id.is_some());
+        Ok(())
     }
 
     /// Gets the integer timestamp field.
@@ -455,9 +498,15 @@ impl Vrt {
     /// When setting this field, you must also provide a [`Tsi`] mode to indicate what
     /// kind of timestamp is being represented.
     ///
+    /// The packet size is updated automatically.
+    ///
     /// # Errors
     /// If a timestamp and tsi mode are passed that don't work together, this function
     /// will return an error. For example, if `timestamp = Some(123)` and `tsi = Tsi::Null`.
+    ///
+    /// Adding a timestamp to a packet that already fills the 16-bit packet
+    /// size field returns [`VitaError::PacketTooLarge`] and leaves the packet
+    /// unchanged.
     ///
     /// # Example
     /// ```
@@ -488,8 +537,10 @@ impl Vrt {
         {
             return Err(VitaError::TimestampModeMismatch);
         }
+        let mut header = self.header;
+        header.set_tsi(tsi);
+        self.set_header(header)?;
         self.integer_timestamp = timestamp;
-        self.header.set_tsi(tsi);
         Ok(())
     }
 
@@ -502,9 +553,15 @@ impl Vrt {
     /// When setting this field, you must also provide a [`Tsf`] mode to indicate what
     /// kind of timestamp is being represented.
     ///
+    /// The packet size is updated automatically.
+    ///
     /// # Errors
-    /// If a timestamp and tsi mode are passed that don't work together, this function
-    /// will return an error. For example, if `timestamp = Some(123)` and `tsi = Tsi::Null`.
+    /// If a timestamp and tsf mode are passed that don't work together, this function
+    /// will return an error. For example, if `timestamp = Some(123)` and `tsf = Tsf::Null`.
+    ///
+    /// Adding a timestamp to a packet that already fills the 16-bit packet
+    /// size field returns [`VitaError::PacketTooLarge`] and leaves the packet
+    /// unchanged.
     ///
     /// # Example
     /// ```
@@ -535,8 +592,10 @@ impl Vrt {
         {
             return Err(VitaError::TimestampModeMismatch);
         }
+        let mut header = self.header;
+        header.set_tsf(tsf);
+        self.set_header(header)?;
         self.fractional_timestamp = timestamp;
-        self.header.set_tsf(tsf);
         Ok(())
     }
 
@@ -568,6 +627,16 @@ impl Vrt {
     /// Adds (or removes) a packet trailer. Only signal data and extension
     /// data packets can have a trailer.
     ///
+    /// The packet size is updated automatically.
+    ///
+    /// # Errors
+    /// This function should only be used with a signal data packet type. Use
+    /// of this function on other packet types will return an error.
+    ///
+    /// Adding a trailer to a packet that already fills the 16-bit packet size
+    /// field returns [`VitaError::PacketTooLarge`] and leaves the packet
+    /// unchanged.
+    ///
     /// # Example
     /// ```
     /// # use vita49::prelude::*;
@@ -588,8 +657,10 @@ impl Vrt {
     pub fn set_trailer(&mut self, trailer: Option<Trailer>) -> Result<(), VitaError> {
         match &self.payload {
             Payload::SignalData(_) | Payload::ExtensionData(_) => {
+                let mut header = self.header;
+                header.set_trailer_included(trailer.is_some());
+                self.set_header(header)?;
                 self.trailer = trailer;
-                self.header.set_trailer_included(self.trailer.is_some());
                 Ok(())
             }
             _ => Err(VitaError::SignalDataOnly),
@@ -654,6 +725,10 @@ impl Vrt {
     /// This function should only be used with a signal data packet type. Use
     /// of this function on other packet types will return an error.
     ///
+    /// A length that would not fit alongside the packet prologue and trailer
+    /// in the 16-bit VITA 49 packet size field returns
+    /// [`VitaError::PacketTooLarge`] and leaves the packet unchanged.
+    ///
     /// # Example
     /// ```
     /// use vita49::prelude::*;
@@ -668,8 +743,10 @@ impl Vrt {
     /// # }
     /// ```
     pub fn resize_signal_payload(&mut self, len: usize) -> Result<(), VitaError> {
+        self.payload.signal_data()?;
+        let size = Self::packet_size_words(&self.header, SignalData::size_words_for(len))?;
         self.payload.signal_data_mut()?.resize_payload(len);
-        self.update_packet_size();
+        self.header.set_packet_size(size);
         Ok(())
     }
 
@@ -681,8 +758,9 @@ impl Vrt {
     /// This function should only be used with a signal data packet type. Use
     /// of this function on other packet types will return an error.
     ///
-    /// An error is also returned when the payload would not fit alongside the
-    /// packet prologue and trailer in the 16-bit VITA 49 packet size field.
+    /// A payload that would not fit alongside the packet prologue and trailer
+    /// in the 16-bit VITA 49 packet size field returns
+    /// [`VitaError::PacketTooLarge`] and leaves the packet unchanged.
     ///
     /// # Example
     /// ```
@@ -696,13 +774,12 @@ impl Vrt {
     /// # }
     /// ```
     pub fn set_signal_payload(&mut self, payload: impl Into<Vec<u8>>) -> Result<(), VitaError> {
+        self.payload.signal_data()?;
         let payload = payload.into();
-        if !self.payload_fits(payload.len()) {
-            return Err(VitaError::OutOfRange);
-        }
-        let sig_data = self.payload.signal_data_mut()?;
-        sig_data.set_payload(payload)?;
-        self.update_packet_size();
+        let size =
+            Self::packet_size_words(&self.header, SignalData::size_words_for(payload.len()))?;
+        self.payload.signal_data_mut()?.set_payload(payload)?;
+        self.header.set_packet_size(size);
         Ok(())
     }
 
@@ -790,8 +867,9 @@ impl Vrt {
     /// This function should only be used with an extension data packet type.
     /// Use of this function on other packet types will return an error.
     ///
-    /// An error is also returned when the payload would not fit alongside the
-    /// packet prologue and trailer in the 16-bit VITA 49 packet size field.
+    /// A payload that would not fit alongside the packet prologue and trailer
+    /// in the 16-bit VITA 49 packet size field returns
+    /// [`VitaError::PacketTooLarge`] and leaves the packet unchanged.
     ///
     /// # Example
     /// ```
@@ -806,14 +884,13 @@ impl Vrt {
     /// # }
     /// ```
     pub fn resize_extension_payload(&mut self, len: usize) -> Result<(), VitaError> {
-        if !self.payload_fits(len) {
-            return Err(VitaError::OutOfRange);
-        }
+        self.payload.extension_data()?;
+        let size = Self::packet_size_words(&self.header, SignalData::size_words_for(len))?;
         match &mut self.payload {
             Payload::ExtensionData(data) => data.resize(len, 0),
             _ => return Err(VitaError::ExtensionDataOnly),
         }
-        self.update_packet_size();
+        self.header.set_packet_size(size);
         Ok(())
     }
 
@@ -825,8 +902,9 @@ impl Vrt {
     /// This function should only be used with an extension data packet type.
     /// Use of this function on other packet types will return an error.
     ///
-    /// An error is also returned when the payload would not fit alongside the
-    /// packet prologue and trailer in the 16-bit VITA 49 packet size field.
+    /// A payload that would not fit alongside the packet prologue and trailer
+    /// in the 16-bit VITA 49 packet size field returns
+    /// [`VitaError::PacketTooLarge`] and leaves the packet unchanged.
     ///
     /// # Example
     /// ```
@@ -840,15 +918,15 @@ impl Vrt {
     /// # }
     /// ```
     pub fn set_extension_payload(&mut self, payload: impl Into<Vec<u8>>) -> Result<(), VitaError> {
+        self.payload.extension_data()?;
         let payload = payload.into();
-        if !self.payload_fits(payload.len()) {
-            return Err(VitaError::OutOfRange);
-        }
+        let size =
+            Self::packet_size_words(&self.header, SignalData::size_words_for(payload.len()))?;
         match &mut self.payload {
             Payload::ExtensionData(data) => *data = payload,
             _ => return Err(VitaError::ExtensionDataOnly),
         }
-        self.update_packet_size();
+        self.header.set_packet_size(size);
         Ok(())
     }
 
@@ -931,8 +1009,9 @@ impl Vrt {
     /// This function should only be used with an extension context packet
     /// type. Use of this function on other packet types will return an error.
     ///
-    /// An error is also returned when the payload would not fit alongside the
-    /// packet prologue in the 16-bit VITA 49 packet size field.
+    /// A payload that would not fit alongside the packet prologue in the 16-bit
+    /// VITA 49 packet size field returns [`VitaError::PacketTooLarge`] and
+    /// leaves the packet unchanged.
     ///
     /// # Example
     /// ```
@@ -949,16 +1028,13 @@ impl Vrt {
     /// # }
     /// ```
     pub fn resize_extension_context_payload(&mut self, len: usize) -> Result<(), VitaError> {
-        // The type check comes first, so a call on the wrong packet type reports that.
         self.payload.extension_context()?;
-        if !self.payload_fits(len) {
-            return Err(VitaError::OutOfRange);
-        }
+        let size = Self::packet_size_words(&self.header, SignalData::size_words_for(len))?;
         match &mut self.payload {
             Payload::ExtensionContext(data) => data.resize(len, 0),
             _ => return Err(VitaError::ExtensionContextOnly),
         }
-        self.update_packet_size();
+        self.header.set_packet_size(size);
         Ok(())
     }
 
@@ -970,8 +1046,9 @@ impl Vrt {
     /// This function should only be used with an extension context packet
     /// type. Use of this function on other packet types will return an error.
     ///
-    /// An error is also returned when the payload would not fit alongside the
-    /// packet prologue in the 16-bit VITA 49 packet size field.
+    /// A payload that would not fit alongside the packet prologue in the 16-bit
+    /// VITA 49 packet size field returns [`VitaError::PacketTooLarge`] and
+    /// leaves the packet unchanged.
     ///
     /// # Example
     /// ```
@@ -992,14 +1069,13 @@ impl Vrt {
     ) -> Result<(), VitaError> {
         self.payload.extension_context()?;
         let payload = payload.into();
-        if !self.payload_fits(payload.len()) {
-            return Err(VitaError::OutOfRange);
-        }
+        let size =
+            Self::packet_size_words(&self.header, SignalData::size_words_for(payload.len()))?;
         match &mut self.payload {
             Payload::ExtensionContext(data) => *data = payload,
             _ => return Err(VitaError::ExtensionContextOnly),
         }
-        self.update_packet_size();
+        self.header.set_packet_size(size);
         Ok(())
     }
 
@@ -1024,36 +1100,62 @@ impl Vrt {
         self.payload.into_extension_context()
     }
 
-    /// Returns true if a `len`-byte payload fits in the packet.
-    ///
-    /// The packet size field covers the prologue and trailer as well as the
-    /// payload, so how much payload fits depends on which optional words are
-    /// present.
-    fn payload_fits(&self, len: usize) -> bool {
-        let room_words = u16::MAX - self.header.min_packet_size_words();
-        len <= room_words as usize * 4
-    }
-
     /// Update the VRT packet header size field to reflect the current contents of
     /// the data structure.
     ///
-    /// This function should be executed after making any changes to a packet (i.e
-    /// after any functions `set_*()`) to make sure the header size is set correctly
-    /// prior to serialization.
+    /// The `Vrt` setters keep the size up to date. This function should be
+    /// executed after changing the payload through [`Self::payload_mut`] or
+    /// the header through [`Self::header_mut`], to make sure the header size
+    /// is set correctly prior to serialization.
+    ///
+    /// # Errors
+    /// A packet that needs more 32-bit words than the 16-bit VITA 49 packet
+    /// size field can state returns [`VitaError::PacketTooLarge`], and the
+    /// size field is left as it was. [`Payload::size_words`] states which
+    /// payloads this covers.
     ///
     /// # Example
     /// ```
     /// use vita49::prelude::*;
+    /// # fn main() -> Result<(), VitaError> {
     /// let mut packet = Vrt::new_context_packet();
-    /// let context = packet.payload_mut().context_mut().unwrap();
+    /// let context = packet.payload_mut().context_mut()?;
     /// context.set_bandwidth_hz(Some(8e6));
     /// context.set_sample_rate_sps(Some(8e6));
-    /// packet.update_packet_size();
+    /// packet.update_packet_size()?;
     /// // ... write the packet
+    /// # Ok(())
+    /// # }
     /// ```
-    pub fn update_packet_size(&mut self) {
-        let packet_size_words = self.header.min_packet_size_words() + self.payload.size_words();
-        self.header.set_packet_size(packet_size_words);
+    pub fn update_packet_size(&mut self) -> Result<(), VitaError> {
+        let size = Self::packet_size_words(&self.header, self.payload.size_words())?;
+        self.header.set_packet_size(size);
+        Ok(())
+    }
+
+    /// Commits `header`, restating the packet size for the optional fields it
+    /// includes.
+    ///
+    /// # Errors
+    /// Returns [`VitaError::PacketTooLarge`] and leaves the packet unchanged
+    /// if the packet would not fit the 16-bit packet size field.
+    fn set_header(&mut self, header: PacketHeader) -> Result<(), VitaError> {
+        let size = Self::packet_size_words(&header, self.payload.size_words())?;
+        self.header = header;
+        self.header.set_packet_size(size);
+        Ok(())
+    }
+
+    /// Gets the packet size in 32-bit words for the optional fields `header`
+    /// includes around a payload of `payload_words`.
+    ///
+    /// # Errors
+    /// Returns [`VitaError::PacketTooLarge`] if the total does not fit the
+    /// 16-bit packet size field.
+    fn packet_size_words(header: &PacketHeader, payload_words: usize) -> Result<u16, VitaError> {
+        // Summed in `usize` so an oversized packet is refused rather than wrapped.
+        let words = usize::from(header.min_packet_size_words()) + payload_words;
+        u16::try_from(words).map_err(|_| VitaError::PacketTooLarge { words })
     }
 }
 
@@ -1069,7 +1171,7 @@ mod tests {
 
         assert!(matches!(
             packet.set_signal_payload(vec![0u8; room_words * 4 + 1]),
-            Err(VitaError::OutOfRange)
+            Err(VitaError::PacketTooLarge { words }) if words == u16::MAX as usize + 1
         ));
 
         // One word under the ceiling must still be accepted, and the size
@@ -1080,17 +1182,116 @@ mod tests {
         assert_eq!(packet.header().packet_size(), u16::MAX);
     }
 
+    /// A signal data packet whose payload fills the 16-bit packet size field.
+    fn full_signal_data_packet() -> crate::Vrt {
+        use crate::prelude::*;
+        let mut packet = Vrt::new_signal_data_packet();
+        let room_words = (u16::MAX - packet.header().min_packet_size_words()) as usize;
+        packet
+            .set_signal_payload(vec![0u8; room_words * 4])
+            .unwrap();
+        assert_eq!(packet.header().packet_size(), u16::MAX);
+        packet
+    }
+
+    #[test]
+    fn optional_words_past_a_full_packet_are_rejected() {
+        use crate::prelude::*;
+
+        let too_large = |result: Result<(), VitaError>| matches!(result, Err(VitaError::PacketTooLarge { words }) if words > u16::MAX as usize);
+
+        let mut packet = full_signal_data_packet();
+        let before = packet.clone();
+        assert!(too_large(packet.set_trailer(Some(Trailer::default()))));
+        assert!(too_large(
+            packet.set_class_id(Some(ClassIdentifier::default()))
+        ));
+        assert!(too_large(packet.set_integer_timestamp(Some(1), Tsi::Utc)));
+        assert!(too_large(
+            packet.set_fractional_timestamp(Some(1), Tsf::RealTimePs)
+        ));
+        // Each refusal leaves the packet as it was.
+        assert_eq!(packet, before);
+
+        // Adding a stream ID to a packet without one is refused the same way.
+        let mut packet = Vrt::new_signal_data_packet();
+        packet.set_stream_id(None).unwrap();
+        let room_words = (u16::MAX - packet.header().min_packet_size_words()) as usize;
+        packet
+            .set_signal_payload(vec![0u8; room_words * 4])
+            .unwrap();
+        let before = packet.clone();
+        assert!(too_large(packet.set_stream_id(Some(1))));
+        assert_eq!(packet, before);
+    }
+
+    #[test]
+    fn optional_word_setters_update_the_packet_size() {
+        use crate::prelude::*;
+        let mut packet = Vrt::new_signal_data_packet();
+        assert_eq!(packet.header().packet_size(), 2);
+
+        packet
+            .set_class_id(Some(ClassIdentifier::default()))
+            .unwrap();
+        packet.set_integer_timestamp(Some(1), Tsi::Utc).unwrap();
+        packet
+            .set_fractional_timestamp(Some(1), Tsf::RealTimePs)
+            .unwrap();
+        packet.set_trailer(Some(Trailer::default())).unwrap();
+        assert_eq!(packet.header().packet_size(), 2 + 2 + 1 + 2 + 1);
+
+        packet.set_stream_id(None).unwrap();
+        assert_eq!(packet.header().packet_size(), 1 + 2 + 1 + 2 + 1);
+
+        // The size the setters state has to survive a round trip through the wire.
+        let bytes = packet.to_bytes().unwrap();
+        assert_eq!(bytes.len(), usize::from(packet.header().packet_size()) * 4);
+        assert_eq!(Vrt::try_from(&bytes[..]).unwrap(), packet);
+    }
+
+    #[test]
+    fn oversized_resize_is_rejected() {
+        use crate::prelude::*;
+        let mut packet = Vrt::new_signal_data_packet();
+        packet.set_signal_payload([1, 2, 3, 4]).unwrap();
+        let before = packet.clone();
+
+        assert!(matches!(
+            packet.resize_signal_payload(u16::MAX as usize * 4 + 4),
+            Err(VitaError::PacketTooLarge { .. })
+        ));
+        assert_eq!(packet, before);
+    }
+
+    #[test]
+    fn oversized_payload_set_directly_is_rejected_by_update_packet_size() {
+        use crate::prelude::*;
+        let mut packet = Vrt::new_signal_data_packet();
+        let before = packet.header().packet_size();
+        *packet.payload_mut() =
+            Payload::SignalData(SignalData::from_owned(vec![0; u16::MAX as usize * 4 + 4]));
+
+        assert!(matches!(
+            packet.update_packet_size(),
+            Err(VitaError::PacketTooLarge { words }) if words == u16::MAX as usize + 3
+        ));
+        assert_eq!(packet.header().packet_size(), before);
+    }
+
     #[test]
     fn packet_type_within_the_payload_family_round_trips() {
         use crate::prelude::*;
-        let mut packet = Vrt::new_signal_data_packet();
-        packet.set_packet_type(PacketType::ExtensionData).unwrap();
-        packet.set_signal_payload([1, 2, 3, 4]).unwrap();
+        let mut packet = Vrt::new_extension_data_packet();
+        packet
+            .set_packet_type(PacketType::ExtensionDataWithoutStreamId)
+            .unwrap();
+        packet.set_extension_payload([1, 2, 3, 4]).unwrap();
 
         let bytes = packet.to_bytes().unwrap();
         let parsed = Vrt::try_from(&bytes[..]).unwrap();
         assert_eq!(parsed, packet);
-        assert_eq!(parsed.signal_payload().unwrap(), &[1, 2, 3, 4]);
+        assert_eq!(parsed.extension_payload().unwrap(), &[1, 2, 3, 4]);
     }
 
     #[test]
@@ -1103,6 +1304,10 @@ mod tests {
             (Vrt::new_context_packet(), PacketType::Command),
             (Vrt::new_control_packet(), PacketType::ExtensionData),
             (Vrt::new_control_packet(), PacketType::ExtensionContext),
+            (Vrt::new_signal_data_packet(), PacketType::ExtensionData),
+            (Vrt::new_extension_data_packet(), PacketType::SignalData),
+            (Vrt::new_context_packet(), PacketType::ExtensionContext),
+            (Vrt::new_extension_context_packet(), PacketType::Context),
         ];
         for (mut packet, packet_type) in cases {
             let before = packet.clone();
@@ -1119,11 +1324,11 @@ mod tests {
     fn packet_type_keeps_the_stream_id_in_step() {
         use crate::prelude::*;
         let mut packet = Vrt::new_signal_data_packet();
-        packet.set_stream_id(Some(7));
+        packet.set_stream_id(Some(7)).unwrap();
         let with_stream_id = packet.header().packet_size();
 
         packet
-            .set_packet_type(PacketType::ExtensionDataWithoutStreamId)
+            .set_packet_type(PacketType::SignalDataWithoutStreamId)
             .unwrap();
         assert_eq!(packet.stream_id(), None);
         assert_eq!(packet.header().packet_size(), with_stream_id - 1);
@@ -1161,12 +1366,15 @@ mod tests {
             ),
             (Vrt::new_signal_data_packet(), PacketType::SignalData),
             (
-                Vrt::new_signal_data_packet(),
+                Vrt::new_extension_data_packet(),
                 PacketType::ExtensionDataWithoutStreamId,
             ),
-            (Vrt::new_signal_data_packet(), PacketType::ExtensionData),
+            (Vrt::new_extension_data_packet(), PacketType::ExtensionData),
             (Vrt::new_context_packet(), PacketType::Context),
-            (Vrt::new_context_packet(), PacketType::ExtensionContext),
+            (
+                Vrt::new_extension_context_packet(),
+                PacketType::ExtensionContext,
+            ),
             (Vrt::new_control_packet(), PacketType::Command),
             (Vrt::new_control_packet(), PacketType::ExtensionCommand),
         ];
@@ -1186,7 +1394,7 @@ mod tests {
     fn refused_packet_leaves_nothing_in_the_writer() {
         use crate::prelude::*;
         let mut packet = Vrt::new_signal_data_packet();
-        packet.set_stream_id(Some(0xAABB_CCDD));
+        packet.set_stream_id(Some(0xAABB_CCDD)).unwrap();
         packet.header_mut().set_packet_type(PacketType::Context);
 
         let mut out = Vec::new();
@@ -1234,10 +1442,10 @@ mod tests {
     fn context_packet_stream_id_none_defaults_to_some_zero() {
         use crate::prelude::*;
         let mut packet = Vrt::new_context_packet();
-        packet.set_stream_id(None);
+        packet.set_stream_id(None).unwrap();
         // Rule 5.1.2-1: Context packets must include Stream ID
         assert_eq!(packet.stream_id(), Some(0));
-        packet.update_packet_size();
+        packet.update_packet_size().unwrap();
 
         // Must serialize and deserialize cleanly without wire stream corruption
         let bytes = packet.to_bytes().unwrap();
@@ -1272,7 +1480,7 @@ mod tests {
     fn extension_data_round_trips_with_and_without_stream_id() {
         use crate::prelude::*;
         let mut packet = Vrt::new_extension_data_packet();
-        packet.set_stream_id(Some(0xDEADBEEF));
+        packet.set_stream_id(Some(0xDEADBEEF)).unwrap();
         packet.set_extension_payload([1, 2, 3, 4, 5, 6]).unwrap();
 
         let bytes = packet.to_bytes().unwrap();
@@ -1286,12 +1494,12 @@ mod tests {
             &[1, 2, 3, 4, 5, 6, 0, 0]
         );
 
-        packet.set_stream_id(None);
+        packet.set_stream_id(None).unwrap();
         assert_eq!(
             packet.header().packet_type(),
             PacketType::ExtensionDataWithoutStreamId
         );
-        packet.update_packet_size();
+        packet.update_packet_size().unwrap();
         let bytes = packet.to_bytes().unwrap();
         let parsed = Vrt::try_from(&bytes[..]).unwrap();
         assert_eq!(
@@ -1310,7 +1518,7 @@ mod tests {
         let mut trailer = Trailer::default();
         trailer.set_agc_indicator(Some(true));
         packet.set_trailer(Some(trailer)).unwrap();
-        packet.update_packet_size();
+        packet.update_packet_size().unwrap();
 
         let bytes = packet.to_bytes().unwrap();
         let parsed = Vrt::try_from(&bytes[..]).unwrap();
@@ -1372,11 +1580,11 @@ mod tests {
 
         assert!(matches!(
             packet.set_extension_payload(vec![0u8; room_words * 4 + 1]),
-            Err(VitaError::OutOfRange)
+            Err(VitaError::PacketTooLarge { .. })
         ));
         assert!(matches!(
             packet.resize_extension_payload(room_words * 4 + 1),
-            Err(VitaError::OutOfRange)
+            Err(VitaError::PacketTooLarge { .. })
         ));
         assert_eq!(packet.extension_payload().unwrap(), &[] as &[u8]);
 
@@ -1412,8 +1620,10 @@ mod tests {
     fn extension_context_round_trips_with_prologue_fields() {
         use crate::prelude::*;
         let mut packet = Vrt::new_extension_context_packet();
-        packet.set_stream_id(Some(0xDEADBEEF));
-        packet.set_class_id(Some(ClassIdentifier::default()));
+        packet.set_stream_id(Some(0xDEADBEEF)).unwrap();
+        packet
+            .set_class_id(Some(ClassIdentifier::default()))
+            .unwrap();
         // A payload whose first word, read as CIF0, would enable fields the
         // remaining words cannot fill.
         packet
@@ -1438,7 +1648,7 @@ mod tests {
         use crate::prelude::*;
         let mut packet = Vrt::new_extension_context_packet();
         // Rule 5.1.2-1 requires a stream ID on extension context packets.
-        packet.set_stream_id(None);
+        packet.set_stream_id(None).unwrap();
         assert_eq!(packet.stream_id(), Some(0));
         assert_eq!(packet.header().packet_type(), PacketType::ExtensionContext);
     }
@@ -1515,11 +1725,11 @@ mod tests {
 
         assert!(matches!(
             packet.set_extension_context_payload(vec![0u8; room_words * 4 + 1]),
-            Err(VitaError::OutOfRange)
+            Err(VitaError::PacketTooLarge { .. })
         ));
         assert!(matches!(
             packet.resize_extension_context_payload(room_words * 4 + 1),
-            Err(VitaError::OutOfRange)
+            Err(VitaError::PacketTooLarge { .. })
         ));
         assert_eq!(packet.extension_context_payload().unwrap(), &[] as &[u8]);
 
