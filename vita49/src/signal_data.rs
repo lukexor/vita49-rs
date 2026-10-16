@@ -218,7 +218,8 @@ impl SignalData {
     }
 
     /// Gets the size of a `len`-byte raw payload in 32-bit words. Shared with
-    /// extension data payloads, which use the same wire layout.
+    /// extension data and extension context payloads, which use the same wire
+    /// layout.
     pub(crate) fn size_words_for(len: usize) -> u16 {
         // Ceiling division to make sure we account for padding
         //
@@ -229,7 +230,7 @@ impl SignalData {
     }
 
     /// Reads `words` 32-bit words of raw payload. Shared with extension data
-    /// payloads, which use the same wire layout.
+    /// and extension context payloads, which use the same wire layout.
     pub(crate) fn read_payload<R: std::io::Read + std::io::Seek>(
         reader: &mut deku::reader::Reader<R>,
         words: usize,
@@ -251,7 +252,8 @@ impl SignalData {
     }
 
     /// Writes a raw payload padded to whole 32-bit words. Shared with
-    /// extension data payloads, which use the same wire layout.
+    /// extension data and extension context payloads, which use the same wire
+    /// layout.
     pub(crate) fn write_payload<W: Write + Seek>(
         writer: &mut Writer<W>,
         data: &[u8],
