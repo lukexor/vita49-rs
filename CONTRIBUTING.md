@@ -32,6 +32,8 @@ met:
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).
 - GitHub Workflows pass.
 - If the change is significant, add a line to the [`CHANGELOG.md`](CHANGELOG.md) file.
+- Please avoid using `Co-authored-by` tags from AI agents. Work you contribute should
+  be solely attributed to you.
 
 ### Testing
 
