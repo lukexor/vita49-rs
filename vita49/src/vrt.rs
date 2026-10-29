@@ -652,6 +652,10 @@ impl Vrt {
     /// This function should only be used with a signal data packet type. Use
     /// of this function on other packet types will return an error.
     ///
+    /// An error is also returned when `len` is longer than
+    /// `(u16::MAX - 8) * 4` bytes, the most that fits in the 16-bit VITA 49
+    /// packet size field alongside the largest possible prologue and trailer.
+    ///
     /// # Example
     /// ```
     /// use vita49::prelude::*;
@@ -666,6 +670,9 @@ impl Vrt {
     /// # }
     /// ```
     pub fn resize_signal_payload(&mut self, len: usize) -> Result<(), VitaError> {
+        if !SignalData::is_payload_len_in_range(len) {
+            return Err(VitaError::OutOfRange);
+        }
         self.payload.signal_data_mut()?.resize_payload(len);
         self.update_packet_size();
         Ok(())
@@ -679,8 +686,9 @@ impl Vrt {
     /// This function should only be used with a signal data packet type. Use
     /// of this function on other packet types will return an error.
     ///
-    /// An error is also returned when the payload would not fit alongside the
-    /// packet prologue and trailer in the 16-bit VITA 49 packet size field.
+    /// An error is also returned when the payload is longer than
+    /// `(u16::MAX - 8) * 4` bytes, the most that fits in the 16-bit VITA 49
+    /// packet size field alongside the largest possible prologue and trailer.
     ///
     /// # Example
     /// ```
@@ -695,7 +703,7 @@ impl Vrt {
     /// ```
     pub fn set_signal_payload(&mut self, payload: impl Into<Vec<u8>>) -> Result<(), VitaError> {
         let payload = payload.into();
-        if !self.payload_fits(payload.len()) {
+        if !SignalData::is_payload_len_in_range(payload.len()) {
             return Err(VitaError::OutOfRange);
         }
         let sig_data = self.payload.signal_data_mut()?;
@@ -788,8 +796,9 @@ impl Vrt {
     /// This function should only be used with an extension data packet type.
     /// Use of this function on other packet types will return an error.
     ///
-    /// An error is also returned when the payload would not fit alongside the
-    /// packet prologue and trailer in the 16-bit VITA 49 packet size field.
+    /// An error is also returned when the payload is longer than
+    /// `(u16::MAX - 8) * 4` bytes, the most that fits in the 16-bit VITA 49
+    /// packet size field alongside the largest possible prologue and trailer.
     ///
     /// # Example
     /// ```
@@ -804,7 +813,7 @@ impl Vrt {
     /// # }
     /// ```
     pub fn resize_extension_payload(&mut self, len: usize) -> Result<(), VitaError> {
-        if !self.payload_fits(len) {
+        if !SignalData::is_payload_len_in_range(len) {
             return Err(VitaError::OutOfRange);
         }
         match &mut self.payload {
@@ -823,8 +832,9 @@ impl Vrt {
     /// This function should only be used with an extension data packet type.
     /// Use of this function on other packet types will return an error.
     ///
-    /// An error is also returned when the payload would not fit alongside the
-    /// packet prologue and trailer in the 16-bit VITA 49 packet size field.
+    /// An error is also returned when the payload is longer than
+    /// `(u16::MAX - 8) * 4` bytes, the most that fits in the 16-bit VITA 49
+    /// packet size field alongside the largest possible prologue and trailer.
     ///
     /// # Example
     /// ```
@@ -839,7 +849,7 @@ impl Vrt {
     /// ```
     pub fn set_extension_payload(&mut self, payload: impl Into<Vec<u8>>) -> Result<(), VitaError> {
         let payload = payload.into();
-        if !self.payload_fits(payload.len()) {
+        if !SignalData::is_payload_len_in_range(payload.len()) {
             return Err(VitaError::OutOfRange);
         }
         match &mut self.payload {
@@ -871,16 +881,6 @@ impl Vrt {
         self.payload.into_extension_data()
     }
 
-    /// Returns true if a `len`-byte payload fits in the packet.
-    ///
-    /// The packet size field covers the prologue and trailer as well as the
-    /// payload, so how much payload fits depends on which optional words are
-    /// present.
-    fn payload_fits(&self, len: usize) -> bool {
-        let room_words = u16::MAX - self.header.min_packet_size_words();
-        len <= room_words as usize * 4
-    }
-
     /// Update the VRT packet header size field to reflect the current contents of
     /// the data structure.
     ///
@@ -907,23 +907,78 @@ impl Vrt {
 #[cfg(test)]
 mod tests {
 
+    const MAX_PAYLOAD_BYTES: usize = crate::signal_data::MAX_PAYLOAD_WORDS as usize * 4;
+
+    /// Gives `packet` every optional prologue field and a trailer, the
+    /// largest it can make the prologue and trailer.
+    fn fill_prologue_and_trailer(packet: &mut crate::Vrt) {
+        use crate::prelude::*;
+        packet.set_stream_id(Some(0x1234));
+        packet.set_class_id(Some(ClassIdentifier::default()));
+        packet.set_integer_timestamp(Some(1), Tsi::Utc).unwrap();
+        packet
+            .set_fractional_timestamp(Some(2), Tsf::SampleCount)
+            .unwrap();
+        packet.set_trailer(Some(Trailer::default())).unwrap();
+        packet.update_packet_size();
+    }
+
+    #[test]
+    fn max_prologue_and_trailer_words_matches_a_full_header() {
+        use crate::prelude::*;
+        use crate::signal_data::MAX_PROLOGUE_AND_TRAILER_WORDS;
+
+        let mut packet = Vrt::new_signal_data_packet();
+        fill_prologue_and_trailer(&mut packet);
+        assert_eq!(
+            packet.header().min_packet_size_words(),
+            MAX_PROLOGUE_AND_TRAILER_WORDS
+        );
+    }
+
     #[test]
     fn oversized_signal_payload_is_rejected_rather_than_wrapping() {
         use crate::prelude::*;
 
         let mut packet = Vrt::new_signal_data_packet();
-        let room_words = (u16::MAX - packet.header().min_packet_size_words()) as usize;
-
         assert!(matches!(
-            packet.set_signal_payload(vec![0u8; room_words * 4 + 1]),
+            packet.set_signal_payload(vec![0u8; MAX_PAYLOAD_BYTES + 1]),
             Err(VitaError::OutOfRange)
         ));
+        assert!(matches!(
+            packet.resize_signal_payload(MAX_PAYLOAD_BYTES + 1),
+            Err(VitaError::OutOfRange)
+        ));
+        assert_eq!(packet.signal_payload().unwrap(), &[] as &[u8]);
+    }
 
-        // One word under the ceiling must still be accepted, and the size
-        // field must hold the true total rather than a wrapped value.
+    #[test]
+    fn prologue_added_after_a_max_size_payload_does_not_wrap_the_packet_size() {
+        use crate::prelude::*;
+
+        // Regression test for #66: the payload limit used to depend on the
+        // prologue at the time it was set, so growing the prologue afterwards
+        // wrapped the 16-bit packet size field.
+        let mut packet = Vrt::new_signal_data_packet();
         packet
-            .set_signal_payload(vec![0u8; room_words * 4])
+            .set_signal_payload(vec![0u8; MAX_PAYLOAD_BYTES])
             .unwrap();
+        fill_prologue_and_trailer(&mut packet);
+        assert_eq!(packet.header().packet_size(), u16::MAX);
+
+        let bytes = packet.to_bytes().unwrap();
+        assert_eq!(bytes.len(), u16::MAX as usize * 4);
+        let parsed = Vrt::try_from(&bytes[..]).unwrap();
+        assert_eq!(parsed, packet);
+    }
+
+    #[test]
+    fn resize_to_a_max_size_signal_payload_then_full_prologue_does_not_wrap() {
+        use crate::prelude::*;
+
+        let mut packet = Vrt::new_signal_data_packet();
+        packet.resize_signal_payload(MAX_PAYLOAD_BYTES).unwrap();
+        fill_prologue_and_trailer(&mut packet);
         assert_eq!(packet.header().packet_size(), u16::MAX);
     }
 
@@ -1312,21 +1367,21 @@ mod tests {
     fn oversized_extension_payload_is_rejected() {
         use crate::prelude::*;
         let mut packet = Vrt::new_extension_data_packet();
-        let room_words = (u16::MAX - packet.header().min_packet_size_words()) as usize;
 
         assert!(matches!(
-            packet.set_extension_payload(vec![0u8; room_words * 4 + 1]),
+            packet.set_extension_payload(vec![0u8; MAX_PAYLOAD_BYTES + 1]),
             Err(VitaError::OutOfRange)
         ));
         assert!(matches!(
-            packet.resize_extension_payload(room_words * 4 + 1),
+            packet.resize_extension_payload(MAX_PAYLOAD_BYTES + 1),
             Err(VitaError::OutOfRange)
         ));
         assert_eq!(packet.extension_payload().unwrap(), &[] as &[u8]);
 
         packet
-            .set_extension_payload(vec![0u8; room_words * 4])
+            .set_extension_payload(vec![0u8; MAX_PAYLOAD_BYTES])
             .unwrap();
+        fill_prologue_and_trailer(&mut packet);
         assert_eq!(packet.header().packet_size(), u16::MAX);
     }
 

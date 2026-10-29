@@ -10,9 +10,17 @@ use crate::packet_header::PacketHeader;
 use crate::payload::Payload;
 use crate::VitaError;
 
-/// The VITA 49 packet size field is 16 bits wide and counts 32-bit words, so
-/// no payload can be longer than this many words (just under 256 KiB).
-const MAX_PAYLOAD_WORDS: u16 = u16::MAX;
+/// The most 32-bit words a packet can include excluding its payload: the
+/// header (1), stream ID (1), class ID (2), integer timestamp (1),
+/// fractional timestamp (2) and trailer (1).
+pub(crate) const MAX_PROLOGUE_AND_TRAILER_WORDS: u16 = 8;
+
+/// The VITA 49 packet size field is 16 bits wide and counts 32-bit words,
+/// including the prologue and trailer. Capping the payload so it fits
+/// the largest possible prologue and trailer means adding a stream ID,
+/// class ID, timestamp or trailer later can never overflow the size
+/// field (just under 256 KiB).
+pub(crate) const MAX_PAYLOAD_WORDS: u16 = u16::MAX - MAX_PROLOGUE_AND_TRAILER_WORDS;
 
 /// Base signal data structure.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, DekuRead, DekuWrite)]
@@ -47,6 +55,12 @@ impl SignalData {
     }
 
     /// Create a new signal data packet directly from an owned vector (zero-copy).
+    ///
+    /// # Warning
+    /// This does not check the payload size cap that [`Self::set_payload`]
+    /// enforces. Keep `data` at or below `(u16::MAX - 8) * 4` bytes, or prefer
+    /// [`Vrt::set_signal_payload`](crate::Vrt::set_signal_payload), which
+    /// checks it and is also zero-copy for an owned vector.
     ///
     /// # Example
     /// ```
@@ -151,12 +165,12 @@ impl SignalData {
     /// # Warning
     /// This setter does not update the packet's size field. Prefer
     /// [`Vrt::set_signal_payload`](crate::Vrt::set_signal_payload), which keeps
-    /// the header in sync and accounts for the prologue and trailer words when
-    /// checking that the payload fits.
+    /// the header in sync.
     ///
     /// # Errors
-    /// A payload longer than `u16::MAX` 32-bit words cannot be described by
-    /// the 16-bit VITA 49 packet size field, so it is rejected rather than
+    /// A payload longer than `u16::MAX - 8` 32-bit words could not be
+    /// described by the 16-bit VITA 49 packet size field once the largest
+    /// possible prologue and trailer are added, so it is rejected rather than
     /// silently truncated.
     ///
     /// # Example
@@ -173,11 +187,18 @@ impl SignalData {
     /// ```
     pub fn set_payload(&mut self, bytes: impl Into<Vec<u8>>) -> Result<(), VitaError> {
         let data = bytes.into();
-        if data.len() > MAX_PAYLOAD_WORDS as usize * 4 {
+        if !Self::is_payload_len_in_range(data.len()) {
             return Err(VitaError::OutOfRange);
         }
         self.data = data;
         Ok(())
+    }
+
+    /// Returns true if a `len`-byte raw payload is within the payload size
+    /// cap. Shared with extension data payloads, which use the same wire
+    /// layout.
+    pub(crate) fn is_payload_len_in_range(len: usize) -> bool {
+        len <= MAX_PAYLOAD_WORDS as usize * 4
     }
 
     /// Resize the data payload.
@@ -187,6 +208,12 @@ impl SignalData {
     /// truncates. The length may change, so you must call
     /// [`crate::Vrt::update_packet_size`]. To keep the length and mutate, use
     /// [`Self::payload_mut`].
+    ///
+    /// # Warning
+    /// This does not check the payload size cap that [`Self::set_payload`]
+    /// enforces. Keep `len` at or below `(u16::MAX - 8) * 4` bytes, or prefer
+    /// [`Vrt::resize_signal_payload`](crate::Vrt::resize_signal_payload),
+    /// which checks it.
     ///
     /// # Example
     /// ```
@@ -222,8 +249,8 @@ impl SignalData {
     pub(crate) fn size_words_for(len: usize) -> u16 {
         // Ceiling division to make sure we account for padding
         //
-        // Cannot truncate: `set_payload` rejects anything longer, and the
-        // reader is bounded by the 16-bit packet size field it read from.
+        // Cannot truncate: the payload setters reject anything longer, and
+        // the reader is bounded by the 16-bit packet size field it read from.
         debug_assert!((len + 3) / 4 <= MAX_PAYLOAD_WORDS as usize);
         ((len + 3) / 4) as u16
     }
