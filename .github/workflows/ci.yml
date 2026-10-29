@@ -93,6 +93,12 @@ jobs:
           ghcr.io/siderolabs/conform:v0.1.0-alpha.30
           enforce
           --base-branch=origin/main
+      - name: Check for Claude co-authorship
+        run: |
+          if git log --format=%B "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" | grep -iE '^co-authored-by:\s*claude'; then
+            echo "::error::Commits containing 'Co-Authored-By: Claude' are not permitted."
+            exit 1
+          fi
 
   msrv:
     name: Check MSRV
