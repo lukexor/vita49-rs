@@ -271,6 +271,38 @@ impl Payload {
         }
     }
 
+    /// Returns whether a header with this packet type selects this payload
+    /// variant.
+    ///
+    /// # Example
+    /// ```
+    /// use vita49::prelude::*;
+    /// let packet = Vrt::new_context_packet();
+    /// assert!(packet.payload().supports_packet_type(PacketType::Context));
+    /// assert!(packet.payload().supports_packet_type(PacketType::ExtensionContext));
+    /// assert!(!packet.payload().supports_packet_type(PacketType::SignalData));
+    /// ```
+    pub fn supports_packet_type(&self, packet_type: PacketType) -> bool {
+        match self {
+            Payload::SignalData(_) => matches!(
+                packet_type,
+                PacketType::SignalDataWithoutStreamId | PacketType::SignalData
+            ),
+            Payload::ExtensionData(_) => matches!(
+                packet_type,
+                PacketType::ExtensionDataWithoutStreamId | PacketType::ExtensionData
+            ),
+            Payload::Context(_) => matches!(
+                packet_type,
+                PacketType::Context | PacketType::ExtensionContext
+            ),
+            Payload::Command(_) => matches!(
+                packet_type,
+                PacketType::Command | PacketType::ExtensionCommand
+            ),
+        }
+    }
+
     /// Gets the payload size in 32-bit words.
     pub fn size_words(&self) -> u16 {
         match self {
